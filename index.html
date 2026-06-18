@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>LiveProgTok — ТВ-лента</title>
+    <style>
+        /* все стили как в прошлом рабочем варианте — без изменений */
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            touch-action: none;
+        }
+        #feed {
+            height: 100vh;
+            width: 100vw;
+            overflow-y: scroll;
+            scroll-snap-type: y mandatory;
+            scroll-behavior: smooth;
+            -webkit-overflow-scrolling: touch;
+        }
+        #feed::-webkit-scrollbar { display: none; }
+        .card {
+            height: 100vh;
+            width: 100vw;
+            scroll-snap-align: start;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            position: relative;
+            background: #111;
+            overflow: hidden;
+            padding: 20px 16px 40px;
+        }
+        .card .background {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            object-fit: cover;
+            background: #0a0a0a;
+        }
+        .card .overlay {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 60%;
+            background: linear-gradient(transparent, rgba(0,0,0,0.85));
+            pointer-events: none;
+            z-index: 1;
+        }
+        .card .content {
+            position: relative;
+            z-index: 2;
+            pointer-events: none;
+        }
+        .card .title {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 4px;
+            text-shadow: 0 2px 12px rgba(0,0,0,0.9);
+        }
+        .card .sub {
+            font-size: 14px;
+            color: #aaa;
+            margin-bottom: 8px;
+            text-shadow: 0 1px 8px rgba(0,0,0,0.8);
+        }
+        .card .count {
+            font-size: 13px;
+            color: #ffcc00;
+            margin-bottom: 6px;
+            text-shadow: 0 1px 8px rgba(0,0,0,0.8);
+        }
+        .card .schedule {
+            max-height: 140px;
+            overflow-y: auto;
+            pointer-events: auto;
+            padding-right: 4px;
+        }
+        .card .schedule::-webkit-scrollbar { width: 3px; }
+        .card .schedule::-webkit-scrollbar-thumb { background: #555; border-radius: 10px; }
+        .card .item {
+            display: flex;
+            gap: 12px;
+            font-size: 14px;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .card .item .time {
+            color: #ffcc00;
+            font-weight: 600;
+            flex-shrink: 0;
+            min-width: 52px;
+        }
+        .card .item .name {
+            color: #eee;
+            line-height: 1.3;
+        }
+        .card .no-data {
+            color: #666;
+            font-style: italic;
+        }
+        .actions {
+            position: absolute;
+            right: 16px;
+            bottom: 160px;
+            z-index: 3;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 18px;
+            pointer-events: none;
+        }
+        .actions > * { pointer-events: auto; }
+        .action-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 12px;
+            cursor: pointer;
+            text-shadow: 0 1px 8px rgba(0,0,0,0.8);
+            transition: transform 0.15s;
+        }
+        .action-btn:active { transform: scale(0.85); }
+        .action-btn .icon { font-size: 28px; line-height: 1; }
+        #status {
+            position: fixed;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 999;
+            background: rgba(0,0,0,0.75);
+            backdrop-filter: blur(8px);
+            padding: 8px 18px;
+            border-radius: 30px;
+            font-size: 13px;
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.08);
+            pointer-events: none;
+            text-align: center;
+            max-width: 90%;
+            transition: opacity 0.4s;
+        }
+        #status.hidden { opacity: 0; }
+        #download-btn {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 999;
+            background: rgba(255,255,255,0.15);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #fff;
+            padding: 10px 24px;
+            border-radius: 30px;
+            font-size: 14px;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: background 0.2s;
+        }
+        #download-btn:hover { background: rgba(255,255,255,0.25); }
+        @media (max-width: 480px) {
+            .card .title { font-size: 20px; }
+            .card .item { font-size: 13px; }
+            .actions { right: 10px; bottom: 140px; gap: 14px; }
+            .action-btn .icon { font-size: 24px; }
+            #download-btn { bottom: 20px; padding: 8px 18px; font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="status">Загрузка...</div>
+    <div id="feed"></div>
+    <button id="download-btn">📥 Скачать JSON</button>
+
+    <script>
+        // ============================================================
+        // 1. ИСТОЧНИКИ — расширенный список (все репозитории + raw)
+        // ============================================================
+        const SOURCES = [
+            // Основной репозиторий (OinkTechLtd)
+            'https://cdn.jsdelivr.net/gh/OinkTechLtd/liveprogramma@main/data/schedule.json',
+            'https://raw.githubusercontent.com/OinkTechLtd/liveprogramma/main/data/schedule.json',
+            // Резервный (OinkTechLLC)
+            'https://cdn.jsdelivr.net/gh/OinkTechLLC/liveprogramma@main/data/schedule.json',
+            'https://raw.githubusercontent.com/OinkTechLLC/liveprogramma/main/data/schedule.json',
+            // Резервный (TwixoffLtdco)
+            'https://cdn.jsdelivr.net/gh/TwixoffLtdco/liveprogramma@main/data/schedule.json',
+            'https://raw.githubusercontent.com/TwixoffLtdco/liveprogramma/main/data/schedule.json',
+            // GitHub API как последний шанс
+            'https://api.github.com/repos/OinkTechLtd/liveprogramma/contents/data/schedule.json'
+        ];
+
+        const STORAGE_KEY = 'liveprogtok_source_index';
+        const REFRESH_INTERVAL = 3 * 60 * 60 * 1000;
+
+        let currentData = null;
+        let currentIndex = 0;
+        const feedEl = document.getElementById('feed');
+        const statusEl = document.getElementById('status');
+
+        // ============================================================
+        // 2. ВСПОМОГАТЕЛЬНЫЕ
+        // ============================================================
+        function formatTime(iso) {
+            if (!iso) return '';
+            try {
+                const d = new Date(iso);
+                if (isNaN(d)) return iso;
+                return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            } catch (_) { return iso; }
+        }
+
+        function showStatus(msg, isError = false) {
+            statusEl.textContent = msg;
+            statusEl.style.background = isError ? 'rgba(200,40,40,0.85)' : 'rgba(0,0,0,0.75)';
+            statusEl.classList.remove('hidden');
+            clearTimeout(statusEl._hideTimer);
+            statusEl._hideTimer = setTimeout(() => statusEl.classList.add('hidden'), 4000);
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // ============================================================
+        // 3. ЗАГРУЗКА (пробует все источники)
+        // ============================================================
+        async function fetchAny(url, timeout = 15000) {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeout);
+            try {
+                const resp = await fetch(url, { signal: controller.signal });
+                clearTimeout(id);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const text = await resp.text();
+                try { return JSON.parse(text); } catch (_) { throw new Error('Не JSON'); }
+            } catch (err) {
+                clearTimeout(id);
+                throw err;
+            }
+        }
+
+        async function loadSchedule() {
+            let startIdx = 0;
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved !== null) {
+                    const parsed = parseInt(saved, 10);
+                    if (!isNaN(parsed) && parsed >= 0 && parsed < SOURCES.length) startIdx = parsed;
+                }
+            } catch (_) {}
+
+            let lastError = null;
+            for (let i = 0; i < SOURCES.length; i++) {
+                const idx = (startIdx + i) % SOURCES.length;
+                const url = SOURCES[idx];
+                try {
+                    showStatus(`Загрузка ${idx+1}/${SOURCES.length}...`);
+                    const data = await fetchAny(url);
+                    localStorage.setItem(STORAGE_KEY, String(idx));
+                    showStatus(`Данные загружены (${idx+1})`);
+                    console.log('✅ ЗАГРУЖЕННЫЕ ДАННЫЕ:', data);
+                    return data;
+                } catch (err) {
+                    lastError = err;
+                    console.warn(`Источник ${idx+1} не ответил:`, err.message);
+                }
+            }
+            throw new Error(`Все источники недоступны: ${lastError?.message || 'неизвестная ошибка'}`);
+        }
+
+        // ============================================================
+        // 4. ПАРСЕР — улучшенный поиск расписания
+        // ============================================================
+        function extractChannels(data) {
+            if (!data || typeof data !== 'object') return [];
+
+            const channelsObj = data.channels || {};
+            const scheduleObj = data.schedule || {};
+
+            // Собираем все ключи расписания (для поиска по алиасам)
+            const scheduleKeys = Object.keys(scheduleObj);
+
+            const result = [];
+            for (const [id, ch] of Object.entries(channelsObj)) {
+                if (typeof ch !== 'object' || ch === null) continue;
+
+                const name = ch.name || ch.title || id;
+                const group = ch.group || ch.category || '';
+                const stream = ch.stream_url || ch.url || '';
+
+                // 1. Ищем расписание по ID канала
+                let schedule = scheduleObj[id] || [];
+
+                // 2. Если не нашли, ищем по алиасам (если есть)
+                if (schedule.length === 0 && ch.aliases && Array.isArray(ch.aliases)) {
+                    for (const alias of ch.aliases) {
+                        if (scheduleObj[alias] && scheduleObj[alias].length > 0) {
+                            schedule = scheduleObj[alias];
+                            console.log(`🔗 Для канала "${id}" расписание найдено по алиасу "${alias}"`);
+                            break;
+                        }
+                    }
+                }
+
+                // 3. Если всё ещё нет, ищем по любому ключу, содержащему название или алиас (регистронезависимо)
+                if (schedule.length === 0) {
+                    const namesToMatch = [id, name, ...(ch.aliases || [])].map(s => s.toLowerCase());
+                    for (const key of scheduleKeys) {
+                        const keyLower = key.toLowerCase();
+                        for (const match of namesToMatch) {
+                            if (keyLower.includes(match) || match.includes(keyLower)) {
+                                if (scheduleObj[key] && scheduleObj[key].length > 0) {
+                                    schedule = scheduleObj[key];
+                                    console.log(`🔗 Для канала "${id}" расписание найдено по совпадению ключа "${key}"`);
+                                    break;
+                                }
+                            }
+                        }
+                        if (schedule.length > 0) break;
+                    }
+                }
+
+                // Если расписание найдено, конвертируем Unix timestamp
+                if (schedule.length > 0) {
+                    schedule = schedule.map(prog => {
+                        const start = (prog.start !== undefined) ? new Date(prog.start * 1000) : null;
+                        const stop = (prog.stop !== undefined) ? new Date(prog.stop * 1000) : null;
+                        return {
+                            title: prog.title || prog.name || 'Без названия',
+                            start: start ? start.toISOString() : '',
+                            stop: stop ? stop.toISOString() : '',
+                            raw: prog
+                        };
+                    });
+                }
+
+                result.push({
+                    id: id,
+                    name: name,
+                    group: group,
+                    stream: stream,
+                    schedule: schedule
+                });
+            }
+
+            // Если каналов нет, но есть расписание – создаём каналы из ключей schedule
+            if (result.length === 0 && scheduleKeys.length > 0) {
+                for (const key of scheduleKeys) {
+                    const sched = scheduleObj[key];
+                    if (Array.isArray(sched) && sched.length > 0) {
+                        const schedule = sched.map(prog => {
+                            const start = (prog.start !== undefined) ? new Date(prog.start * 1000) : null;
+                            const stop = (prog.stop !== undefined) ? new Date(prog.stop * 1000) : null;
+                            return {
+                                title: prog.title || prog.name || 'Без названия',
+                                start: start ? start.toISOString() : '',
+                                stop: stop ? stop.toISOString() : '',
+                                raw: prog
+                            };
+                        });
+                        result.push({
+                            id: key,
+                            name: key,
+                            group: '',
+                            stream: '',
+                            schedule: schedule
+                        });
+                    }
+                }
+            }
+
+            console.log(`✅ Обработано каналов: ${result.length}`);
+            return result;
+        }
+
+        // ============================================================
+        // 5. ОТРИСОВКА ЛЕНТЫ (без изменений)
+        // ============================================================
+        function renderFeed(data) {
+            currentData = data;
+            const channels = extractChannels(data);
+
+            if (channels.length === 0) {
+                feedEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#666;font-size:18px;">Нет данных для отображения</div>`;
+                showStatus('Нет данных', true);
+                return;
+            }
+
+            let html = '';
+            for (const ch of channels) {
+                const schedule = ch.schedule || [];
+                const hasSchedule = schedule.length > 0;
+
+                let scheduleHtml = '';
+                if (hasSchedule) {
+                    const shown = schedule.slice(0, 8);
+                    for (const prog of shown) {
+                        let time = prog.start || '';
+                        let title = prog.title || 'Без названия';
+                        const ft = formatTime(time);
+                        scheduleHtml += `<div class="item"><span class="time">${escapeHtml(ft)}</span><span class="name">${escapeHtml(title)}</span></div>`;
+                    }
+                    if (schedule.length > 8) {
+                        scheduleHtml += `<div class="item" style="color:#888;font-size:12px;border-bottom:none;">+ ещё ${schedule.length - 8}</div>`;
+                    }
+                } else {
+                    scheduleHtml = `<div class="no-data">Нет расписания</div>`;
+                }
+
+                const stream = ch.stream || '';
+                const hasStream = !!stream;
+                const bgHtml = hasStream ?
+                    `<video src="${escapeHtml(stream)}" muted playsinline autoplay loop class="background"></video>` :
+                    `<div class="background" style="display:flex;align-items:center;justify-content:center;font-size:48px;color:#333;">📺</div>`;
+
+                const countText = hasSchedule ? `📺 ${schedule.length} программ` : '';
+
+                html += `
+                    <div class="card" data-channel="${escapeHtml(ch.name)}">
+                        ${bgHtml}
+                        <div class="overlay"></div>
+                        <div class="actions">
+                            <button class="action-btn" onclick="alert('❤️ Лайк для ${escapeHtml(ch.name)}')">
+                                <span class="icon">❤️</span>
+                            </button>
+                            <button class="action-btn" onclick="alert('📺 Поделиться')">
+                                <span class="icon">↗️</span>
+                            </button>
+                        </div>
+                        <div class="content">
+                            <div class="title">${escapeHtml(ch.name)}</div>
+                            <div class="sub">${escapeHtml(ch.group || 'Канал')}</div>
+                            <div class="count">${countText}</div>
+                            <div class="schedule">${scheduleHtml}</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            feedEl.innerHTML = html;
+            feedEl.scrollTop = 0;
+            currentIndex = 0;
+
+            setTimeout(() => {
+                const videos = feedEl.querySelectorAll('video');
+                for (const v of videos) {
+                    v.play().catch(() => {});
+                }
+            }, 300);
+
+            showStatus(`Загружено ${channels.length} каналов`);
+        }
+
+        // ============================================================
+        // 6. ПРОКРУТКА, СКАЧИВАНИЕ, ОБНОВЛЕНИЕ, ЗАПУСК (без изменений)
+        // ============================================================
+        let scrollTimeout = null;
+        feedEl.addEventListener('scroll', () => {
+            clearTimeout(scrollTimeout);
+            scrollTimeout = setTimeout(() => {
+                const cards = feedEl.querySelectorAll('.card');
+                let found = -1;
+                const center = feedEl.scrollTop + feedEl.clientHeight / 2;
+                for (let i = 0; i < cards.length; i++) {
+                    const rect = cards[i].getBoundingClientRect();
+                    const cardCenter = rect.top + rect.height / 2;
+                    if (Math.abs(cardCenter - window.innerHeight / 2) < 100) {
+                        found = i;
+                        break;
+                    }
+                }
+                if (found !== -1 && found !== currentIndex) {
+                    currentIndex = found;
+                }
+            }, 150);
+        });
+
+        document.getElementById('download-btn').addEventListener('click', () => {
+            if (!currentData) { alert('Нет данных'); return; }
+            const blob = new Blob([JSON.stringify(currentData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `schedule_${new Date().toISOString().slice(0,10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        async function refreshData() {
+            try {
+                const data = await loadSchedule();
+                renderFeed(data);
+                showStatus('Данные обновлены');
+            } catch (err) {
+                showStatus('Ошибка обновления: ' + err.message, true);
+            }
+        }
+
+        async function init() {
+            try {
+                const data = await loadSchedule();
+                renderFeed(data);
+            } catch (err) {
+                feedEl.innerHTML = `
+                    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;padding:20px;text-align:center;color:#888;">
+                        <div style="font-size:48px;margin-bottom:20px;">📡</div>
+                        <div style="font-size:18px;margin-bottom:10px;">Не удалось загрузить данные</div>
+                        <div style="font-size:14px;color:#666;">${escapeHtml(err.message)}</div>
+                        <button onclick="location.reload()" style="margin-top:20px;padding:10px 30px;border:none;border-radius:30px;background:#ffcc00;color:#000;font-weight:600;font-size:16px;cursor:pointer;">Повторить</button>
+                    </div>
+                `;
+                showStatus('Ошибка загрузки', true);
+            }
+
+            setInterval(refreshData, REFRESH_INTERVAL);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    </script>
+</body>
+</html>
